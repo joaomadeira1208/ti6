@@ -5,33 +5,46 @@ from parallel_pipeline import ParallelPipeline
 import json
 
 
-def load_model(model_path='model.pkl'):
-    """Carrega o modelo XGBoost treinado"""
+def load_model(model_path='model.pkl', scaler_path='scaler.pkl'):
+    """Carrega o modelo XGBoost treinado e o scaler"""
+    print(f"Carregando modelo de {model_path}...")
     with open(model_path, 'rb') as f:
         model = pickle.load(f)
-    return model
+    
+    scaler = None
+    if os.path.exists(scaler_path):
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
+        print(f"✓ Scaler carregado de {scaler_path}")
+    else:
+        print(f"⚠️  Scaler não encontrado em {scaler_path}")
+    
+    return model, scaler
 
 
 def load_label_map(label_map_path='label_map.json'):
     """Carrega o mapa de labels"""
     with open(label_map_path, 'r') as f:
-        label_map = json.load(f)
+        label_map_str = json.load(f)
+    # Converte chaves de string para int
+    label_map = {int(k): v for k, v in label_map_str.items()}
     return label_map
 
 
-def predict_single_image(image_path, model, num_workers=2):
+def predict_single_image(image_path, model, scaler=None, num_workers=2):
     """
     Faz predição de uma única imagem usando a pipeline paralelizada
     
     Args:
         image_path: caminho para a imagem
         model: modelo XGBoost treinado
+        scaler: scaler para normalização (opcional)
         num_workers: número de workers por estágio
         
     Returns:
         dicionário com resultado da predição
     """
-    pipeline = ParallelPipeline(model=model)
+    pipeline = ParallelPipeline(model=model, scaler=scaler)
     results = pipeline.process_images([image_path], num_workers=num_workers)
     pipeline.stop()
     
@@ -40,32 +53,34 @@ def predict_single_image(image_path, model, num_workers=2):
     return None
 
 
-def predict_batch(image_paths, model, num_workers=2):
+def predict_batch(image_paths, model, scaler=None, num_workers=2):
     """
     Faz predição de múltiplas imagens usando a pipeline paralelizada
     
     Args:
         image_paths: lista de caminhos para imagens
         model: modelo XGBoost treinado
+        scaler: scaler para normalização (opcional)
         num_workers: número de workers por estágio
         
     Returns:
         lista de dicionários com resultados
     """
-    pipeline = ParallelPipeline(model=model)
+    pipeline = ParallelPipeline(model=model, scaler=scaler)
     results = pipeline.process_images(image_paths, num_workers=num_workers)
     pipeline.stop()
     
     return results
 
 
-def predict_directory(directory_path, model, num_workers=2):
+def predict_directory(directory_path, model, scaler=None, num_workers=2):
     """
     Faz predição de todas as imagens em um diretório
     
     Args:
         directory_path: caminho para o diretório
         model: modelo XGBoost treinado
+        scaler: scaler para normalização (opcional)
         num_workers: número de workers por estágio
         
     Returns:
@@ -85,7 +100,7 @@ def predict_directory(directory_path, model, num_workers=2):
     print(f"Encontradas {len(image_paths)} imagens em {directory_path}")
     
     # Processa em batch
-    return predict_batch(image_paths, model, num_workers=num_workers)
+    return predict_batch(image_paths, model, scaler=scaler, num_workers=num_workers)
 
 
 def print_results(results, label_map=None):
@@ -129,14 +144,13 @@ def main():
     parser = argparse.ArgumentParser(description='Inferência com pipeline paralelizada')
     parser.add_argument('input', help='Caminho para imagem ou diretório')
     parser.add_argument('--model', default='model.pkl', help='Caminho para o modelo')
-    parser.add_argument('--workers', type=int, default=2, help='Número de workers por estágio')
+    parser.add_argument('--workers', type=int, default=1, help='Número de workers por estágio')
     parser.add_argument('--label-map', default='label_map.json', help='Caminho para label_map.json')
     
     args = parser.parse_args()
     
-    # Carrega o modelo
-    print(f"Carregando modelo de {args.model}...")
-    model = load_model(args.model)
+    # Carrega o modelo e scaler
+    model, scaler = load_model(args.model)
     
     # Carrega o label map se existir
     label_map = None
@@ -146,12 +160,21 @@ def main():
     # Verifica se é arquivo ou diretório
     if os.path.isfile(args.input):
         print(f"Processando imagem: {args.input}")
-        result = predict_single_image(args.input, model, num_workers=args.workers)
+        result = predict_single_image(args.input, model, scaler=scaler, num_workers=args.workers)
+        
+        if result is None:
+            print("\n❌ Erro: Não foi possível processar a imagem.")
+            print("   Possíveis causas:")
+            print("   - Imagem corrompida ou em formato inválido")
+            print("   - Nenhuma face detectada na imagem")
+            print("   - Erro na extração de features")
+            return
+        
         print_results([result], label_map)
         
     elif os.path.isdir(args.input):
         print(f"Processando diretório: {args.input}")
-        results = predict_directory(args.input, model, num_workers=args.workers)
+        results = predict_directory(args.input, model, scaler=scaler, num_workers=args.workers)
         print_results(results, label_map)
         
         # Estatísticas

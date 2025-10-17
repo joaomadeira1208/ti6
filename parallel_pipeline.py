@@ -14,14 +14,16 @@ class ParallelPipeline:
     3. Classificação/Predição
     """
     
-    def __init__(self, model=None, batch_size=4, max_queue_size=10):
+    def __init__(self, model=None, scaler=None, batch_size=4, max_queue_size=10):
         """
         Args:
             model: modelo XGBoost treinado (opcional, para inferência)
+            scaler: scaler para normalização (opcional)
             batch_size: número de imagens a processar em batch
             max_queue_size: tamanho máximo das filas entre estágios
         """
         self.model = model
+        self.scaler = scaler
         self.batch_size = batch_size
         
         # Filas para comunicação entre estágios
@@ -106,6 +108,11 @@ class ParallelPipeline:
                 try:
                     if features is not None and self.model is not None:
                         features_reshaped = features.reshape(1, -1)
+                        
+                        # Normaliza com scaler se disponível
+                        if self.scaler is not None:
+                            features_reshaped = self.scaler.transform(features_reshaped)
+                        
                         prediction = self.model.predict(features_reshaped)[0]
                         proba = self.model.predict_proba(features_reshaped)[0]
                         results_dict[idx] = {
@@ -196,19 +203,20 @@ class ParallelPipeline:
                 t.join(timeout=1.0)
 
 
-def process_images_parallel(image_paths, model=None, num_workers=2):
+def process_images_parallel(image_paths, model=None, scaler=None, num_workers=2):
     """
     Função de conveniência para processar imagens com pipeline paralelizada
     
     Args:
         image_paths: lista de caminhos de imagens
         model: modelo XGBoost treinado (opcional)
+        scaler: scaler para normalização (opcional)
         num_workers: número de workers por estágio
         
     Returns:
         lista de resultados
     """
-    pipeline = ParallelPipeline(model=model)
+    pipeline = ParallelPipeline(model=model, scaler=scaler)
     results = pipeline.process_images(image_paths, num_workers=num_workers)
     pipeline.stop()
     return results
