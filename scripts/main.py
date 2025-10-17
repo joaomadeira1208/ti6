@@ -1,21 +1,36 @@
 import pandas as pd
 import numpy as np
+import sys
+import os
+from pathlib import Path
+
+# Adiciona o diretório raiz ao path
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 from imblearn.over_sampling import SMOTE
-from data import generate_csv
-import os
+from src.data import generate_csv
 import pickle
 import json
 
+# Caminhos relativos ao diretório raiz
+RESULTS_DIR = ROOT_DIR / 'results'
+MODELS_DIR = ROOT_DIR / 'models'
+RESULTS_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(exist_ok=True)
+
+CSV_PATH = RESULTS_DIR / 'all_features.csv'
+
 # 1️⃣ Carregar CSV
-if os.path.exists('all_features.csv'):
-    df = pd.read_csv('all_features.csv')
+if CSV_PATH.exists():
+    df = pd.read_csv(CSV_PATH)
 else:
     generate_csv()
-    df = pd.read_csv('all_features.csv')
+    df = pd.read_csv(CSV_PATH)
     
 # 2️⃣ Separar features e labels
 X = df.drop('label', axis=1).values.astype(np.float32)
@@ -128,19 +143,22 @@ else:
 
 # 🔟 Salvar o modelo e o scaler
 print("\n💾 Salvando modelo e preprocessamento...")
-with open('model.pkl', 'wb') as f:
+model_path = MODELS_DIR / 'model.pkl'
+with open(model_path, 'wb') as f:
     pickle.dump(model, f)
-print("✓ Modelo salvo em 'model.pkl'")
+print(f"✓ Modelo salvo em '{model_path}'")
 
-with open('scaler.pkl', 'wb') as f:
+scaler_path = MODELS_DIR / 'scaler.pkl'
+with open(scaler_path, 'wb') as f:
     pickle.dump(scaler, f)
-print("✓ Scaler salvo em 'scaler.pkl'")
+print(f"✓ Scaler salvo em '{scaler_path}'")
 
 # 1️⃣1️⃣ Salvar mapa de labels e métricas
 label_map = {0: 'fake', 1: 'real'}
-with open('label_map.json', 'w') as f:
+label_map_path = MODELS_DIR / 'label_map.json'
+with open(label_map_path, 'w') as f:
     json.dump(label_map, f, indent=2)
-print("✓ Label map salvo em 'label_map.json'")
+print(f"✓ Label map salvo em '{label_map_path}'")
 
 metrics = {
     'accuracy': float(acc),
@@ -150,9 +168,10 @@ metrics = {
     'n_train': len(y_train),
     'n_test': len(y_test)
 }
-with open('metrics.json', 'w') as f:
+metrics_path = RESULTS_DIR / 'metrics.json'
+with open(metrics_path, 'w') as f:
     json.dump(metrics, f, indent=2)
-print("✓ Métricas salvas em 'metrics.json'")
+print(f"✓ Métricas salvas em '{metrics_path}'")
 
 print("\n" + "="*80)
 print("✅ TREINAMENTO CONCLUÍDO COM SUCESSO!")

@@ -1,16 +1,28 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
-from feature_extraction import extract_features, feature_names
+from pathlib import Path
 from tqdm import tqdm
+
+# Adiciona o diretório raiz ao path
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from src.feature_extraction import extract_features, feature_names
+
+# Caminhos relativos ao diretório raiz
+DATA_DIR = ROOT_DIR / 'data'
+RESULTS_DIR = ROOT_DIR / 'results'
+RESULTS_DIR.mkdir(exist_ok=True)
 
 
 def generate_csv():
     # Pastas que contêm imagens
     folders = {
-        'train': 'train/',
-        'test': 'test/',
-        'val': 'val/'
+        'train': DATA_DIR / 'train',
+        'test': DATA_DIR / 'test',
+        'val': DATA_DIR / 'val'
     }
 
     # Inicializa listas para armazenar features e labels
@@ -68,7 +80,8 @@ def generate_csv():
     df_all['label'] = y_all
 
     # Salva em CSV
-    df_all.to_csv('all_features.csv', index=False)
+    csv_path = RESULTS_DIR / 'all_features.csv'
+    df_all.to_csv(csv_path, index=False)
 
     print(f"\n{'='*80}")
     print(f"✅ CSV criado com sucesso!")
@@ -78,6 +91,6 @@ def generate_csv():
     print(f"   Fake: {sum(y_all == 0)}")
     print(f"   Real: {sum(y_all == 1)}")
     print(f"   Features por imagem: {len(df_all.columns) - 1}")
-    print(f"   Arquivo: all_features.csv")
+    print(f"   Arquivo: {csv_path}")
     print(f"{'='*80}\n")
 

@@ -2,8 +2,8 @@ import threading
 import queue
 import cv2
 import numpy as np
-from face_segmentation import FaceSegmenter
-from feature_extraction import extract_features_from_array
+from .face_segmentation import FaceSegmenter
+from .feature_extraction import extract_features_from_array
 
 
 class ParallelPipeline:

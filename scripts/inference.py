@@ -1,11 +1,29 @@
 import os
+import sys
 import pickle
 import numpy as np
-from parallel_pipeline import ParallelPipeline
 import json
+from pathlib import Path
+
+# Adiciona o diretório raiz ao path
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from src.parallel_pipeline import ParallelPipeline
+
+# Caminhos padrão
+MODELS_DIR = ROOT_DIR / 'models'
+DEFAULT_MODEL_PATH = MODELS_DIR / 'model.pkl'
+DEFAULT_SCALER_PATH = MODELS_DIR / 'scaler.pkl'
+DEFAULT_LABEL_MAP_PATH = MODELS_DIR / 'label_map.json'
 
 
-def load_model(model_path='model.pkl', scaler_path='scaler.pkl'):
+def load_model(model_path=None, scaler_path=None):
+    """Carrega o modelo XGBoost treinado e o scaler"""
+    if model_path is None:
+        model_path = DEFAULT_MODEL_PATH
+    if scaler_path is None:
+        scaler_path = DEFAULT_SCALER_PATH
     """Carrega o modelo XGBoost treinado e o scaler"""
     print(f"Carregando modelo de {model_path}...")
     with open(model_path, 'rb') as f:
@@ -143,19 +161,21 @@ def main():
     
     parser = argparse.ArgumentParser(description='Inferência com pipeline paralelizada')
     parser.add_argument('input', help='Caminho para imagem ou diretório')
-    parser.add_argument('--model', default='model.pkl', help='Caminho para o modelo')
+    parser.add_argument('--model', default=None, help='Caminho para o modelo')
     parser.add_argument('--workers', type=int, default=1, help='Número de workers por estágio')
-    parser.add_argument('--label-map', default='label_map.json', help='Caminho para label_map.json')
+    parser.add_argument('--label-map', default=None, help='Caminho para label_map.json')
     
     args = parser.parse_args()
     
     # Carrega o modelo e scaler
-    model, scaler = load_model(args.model)
+    model_path = args.model if args.model else DEFAULT_MODEL_PATH
+    model, scaler = load_model(model_path)
     
     # Carrega o label map se existir
     label_map = None
-    if os.path.exists(args.label_map):
-        label_map = load_label_map(args.label_map)
+    label_map_path = args.label_map if args.label_map else DEFAULT_LABEL_MAP_PATH
+    if os.path.exists(label_map_path):
+        label_map = load_label_map(label_map_path)
     
     # Verifica se é arquivo ou diretório
     if os.path.isfile(args.input):
