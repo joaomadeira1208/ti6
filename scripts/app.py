@@ -2,9 +2,21 @@ import streamlit as st
 import pickle
 import cv2
 import numpy as np
+import sys
+from pathlib import Path
 from PIL import Image
-from face_segmentation import FaceSegmenter
-from feature_extraction import extract_features_from_array
+
+# Adiciona o diretório raiz ao path
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from src.face_segmentation import FaceSegmenter
+from src.feature_extraction import extract_features_from_array
+
+# Caminhos dos modelos
+MODELS_DIR = ROOT_DIR / 'models'
+MODEL_PATH = MODELS_DIR / 'model.pkl'
+SCALER_PATH = MODELS_DIR / 'scaler.pkl'
 
 # Configuração da página
 st.set_page_config(
@@ -21,13 +33,13 @@ st.markdown("Envie uma imagem para verificar se é real ou fake")
 @st.cache_resource
 def load_model_and_scaler():
     try:
-        with open('model.pkl', 'rb') as f:
+        with open(MODEL_PATH, 'rb') as f:
             model = pickle.load(f)
-        with open('scaler.pkl', 'rb') as f:
+        with open(SCALER_PATH, 'rb') as f:
             scaler = pickle.load(f)
         return model, scaler
     except FileNotFoundError as e:
-        st.error(f"❌ Arquivo não encontrado: {e}. Execute `python main.py` primeiro.")
+        st.error(f"❌ Arquivo não encontrado: {e}. Execute `python scripts/main.py` primeiro.")
         return None, None
 
 # Carrega segmentador
@@ -43,6 +55,9 @@ def classify_image(image, model, scaler, segmenter):
     
     # Segmenta face
     face = segmenter.segment_face(img_bgr)
+    
+    if face is None:
+        raise ValueError("Nenhuma face detectada na imagem")
     
     # Extrai features
     features = extract_features_from_array(face)
@@ -71,7 +86,7 @@ if model is not None and scaler is not None:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.image(image, caption="Imagem Original", use_column_width=True)
+            st.image(image, caption="Imagem Original", use_container_width=True)
         
         # Classifica
         with st.spinner("Analisando..."):
@@ -81,7 +96,7 @@ if model is not None and scaler is not None:
                 # Mostra face detectada
                 with col2:
                     face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-                    st.image(face_rgb, caption="Face Detectada", use_column_width=True)
+                    st.image(face_rgb, caption="Face Detectada", use_container_width=True)
                 
                 # Resultado
                 st.markdown("---")
@@ -110,6 +125,7 @@ if model is not None and scaler is not None:
                 
             except Exception as e:
                 st.error(f"❌ Erro ao processar imagem: {str(e)}")
+                st.info("💡 Dica: Certifique-se de que a imagem contém um rosto visível")
     
     else:
         # Instruções
@@ -126,7 +142,7 @@ if model is not None and scaler is not None:
             """)
 
 else:
-    st.warning("⚠️ Treine o modelo primeiro executando: `python main.py`")
+    st.warning("⚠️ Treine o modelo primeiro executando: `python scripts/main.py`")
 
 # Rodapé
 st.markdown("---")
