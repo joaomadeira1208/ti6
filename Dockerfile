@@ -20,9 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY scripts/ scripts/
 COPY models/ models/
+COPY .streamlit/ .streamlit/ # Adicionado: Copia a configuração do Streamlit
 
 # Expõe a porta do Streamlit
 EXPOSE 8501
 
 # Comando para rodar a aplicação
-ENTRYPOINT ["python", "-m", "streamlit", "run", "scripts/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+ENTRYPOINT ["python", "-m", "streamlit", "run", "scripts/app.py", "--server.port=8501", "--server.address=0.0.0.0"] # Removidas as flags de maxUploadSize, CORS e XSRF

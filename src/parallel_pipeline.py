@@ -94,14 +94,24 @@ class ParallelPipeline:
             except queue.Empty:
                 continue
     
-    def _prediction_worker(self, results_dict):
-        """Worker que processa predições (se modelo fornecido)"""
+    def _prediction_worker(self, results_dict, num_producers, total_images):
+        """
+        Worker que processa predições (se modelo fornecido).
+        Consome da result_queue até receber 'num_producers' sinais de finalização (None).
+        """
+        stop_signals_received = 0
+        processed_count = 0
+        
         while not self.stop_flag.is_set():
             try:
                 item = self.result_queue.get(timeout=0.5)
                 
                 if item is None:
-                    break
+                    stop_signals_received += 1
+                    self.result_queue.task_done()
+                    if stop_signals_received >= num_producers:
+                        break
+                    continue
                 
                 idx, features, image_path = item
                 
@@ -131,6 +141,12 @@ class ParallelPipeline:
                             'features': None,
                             'error': 'Failed to extract features'
                         }
+                    
+                    # Log de progresso
+                    processed_count += 1
+                    if processed_count % 10 == 0 or processed_count == total_images:
+                        print(f"🚀 Progresso: {processed_count}/{total_images} imagens processadas...", flush=True)
+
                 except Exception as e:
                     print(f"Erro ao processar resultado de {image_path}: {e}")
                     results_dict[idx] = {
@@ -155,6 +171,7 @@ class ParallelPipeline:
             lista de dicionários com resultados ordenados pelos índices
         """
         results_dict = {}
+        total_images = len(image_paths)
         
         self.stop_flag.clear()
         self.threads = []
@@ -169,7 +186,8 @@ class ParallelPipeline:
             t.start()
             self.threads.append(t)
         
-        t = threading.Thread(target=self._prediction_worker, args=(results_dict,))
+        # Passa o total de imagens para o worker de log
+        t = threading.Thread(target=self._prediction_worker, args=(results_dict, num_workers, total_images))
         t.start()
         self.threads.append(t)
         
