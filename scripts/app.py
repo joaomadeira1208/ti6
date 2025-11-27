@@ -11,15 +11,22 @@ import time
 import plotly.express as px
 from pathlib import Path
 from PIL import Image
+import zipfile
 
 import logging
 
-# Configuração de Logging
+# Configuração de Logging global e silenciamento de logs indesejados do Streamlit
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+# Silenciar loggers específicos do Streamlit que geram warnings indesejados
+# logging.getLogger('streamlit').setLevel(logging.CRITICAL)
+# logging.getLogger('streamlit.runtime.scriptrunner_utils').setLevel(logging.CRITICAL)
+# logging.getLogger('streamlit.runtime.scriptrunner_utils.script_run_context').setLevel(logging.CRITICAL)
+
 logger = logging.getLogger(__name__)
 
 # Adiciona o diretório raiz ao path
@@ -35,15 +42,16 @@ MODELS_DIR = ROOT_DIR / 'models'
 MODEL_PATH = MODELS_DIR / 'model.pkl'
 SCALER_PATH = MODELS_DIR / 'scaler.pkl'
 
-# Configuração da página
-st.set_page_config(
-    page_title="Deepfake Detector",
-    page_icon="🔍",
-    layout="wide"  # Layout wide para acomodar a tabela e gráficos do batch
-)
+if __name__ == "__main__":
+    # Configuração da página
+    st.set_page_config(
+        page_title="Deepfake Detector",
+        page_icon="🔍",
+        layout="wide"  # Layout wide para acomodar a tabela e gráficos do batch
+    )
 
-# Título
-st.title("🔍 Deepfake Detector")
+    # Título
+    st.title("🔍 Deepfake Detector")
 
 # Carrega o modelo e scaler (com cache)
 @st.cache_resource
@@ -90,7 +98,6 @@ def classify_single_image(image, model, scaler, segmenter):
     
     return prediction, probability, face
 
-import zipfile
 
 # --- FUNÇÃO AUXILIAR DE UPLOAD (ZIP & IMAGENS) ---
 def save_and_extract_files(uploaded_files, temp_dir):
@@ -142,7 +149,7 @@ def save_and_extract_files(uploaded_files, temp_dir):
     return image_paths, file_map
 
 # --- FUNÇÃO DE CLASSIFICAÇÃO EM BATCH (PARALELA) ---
-def process_batch_upload(uploaded_files, model, scaler):
+def process_batch_upload(uploaded_files, model, scaler, num_workers=2):
     logger.info(f"Iniciando processamento batch.")
     # Cria diretório temporário
     temp_dir = tempfile.mkdtemp()
@@ -160,10 +167,16 @@ def process_batch_upload(uploaded_files, model, scaler):
         
         start_time = time.time()
         # Processa
-        logger.info("Executando pipeline com 2 workers...")
-        results = pipeline.process_images(image_paths, num_workers=2)
+        logger.info(f"Executando pipeline com {num_workers} workers...")
+        results = pipeline.process_images(image_paths, num_workers=num_workers)
         pipeline.stop()
-        elapsed_time = time.time() - start_time
+        
+        # Se for paralelizado, usamos o tempo interno do pipeline, senão o tempo bruto
+        if hasattr(pipeline, 'execution_time') and pipeline.execution_time > 0:
+             elapsed_time = pipeline.execution_time
+        else:
+             elapsed_time = time.time() - start_time
+             
         logger.info(f"Processamento concluído em {elapsed_time:.2f}s")
         
         # Formata resultados
@@ -234,16 +247,21 @@ def run_scalability_benchmark(uploaded_files, model, scaler):
             logger.info(msg)
             status_text.markdown(f"🔄 Rodando teste com **{n_threads} threads** ({len(image_paths)} imagens)...")
             
-            start_time = time.time()
+            # O tempo agora é medido INTERNAMENTE no pipeline para precisão "Steady State"
+            # start_time = time.time() removido
+            
             try:
                 _ = pipeline.process_images(image_paths, num_workers=n_threads)
+                # Pega o tempo calculado internamente (excluindo overhead da 1ª imagem)
+                elapsed = pipeline.execution_time
+                
             except Exception as e:
                 logger.error(f"ERRO CRÍTICO na execução com {n_threads} threads: {e}", exc_info=True)
                 st.error(f"Erro na execução com {n_threads} threads: {e}")
                 raise e
 
-            elapsed = time.time() - start_time
-            logger.info(f"Finalizado {n_threads} threads em {elapsed:.4f}s")
+            # elapsed = time.time() - start_time removido
+            logger.info(f"Finalizado {n_threads} threads em {elapsed:.4f}s (Cálculo Ajustado)")
             
             if n_threads == 1:
                 base_time = elapsed
@@ -278,167 +296,178 @@ def run_scalability_benchmark(uploaded_files, model, scaler):
 
 
 
-# --- INTERFACE PRINCIPAL ---
-model, scaler = load_model_and_scaler()
+# --- INTERFACE PRINCIPAL (CONTINUAÇÃO) ---
+if __name__ == "__main__":
+    model, scaler = load_model_and_scaler()
 
-if model is not None and scaler is not None:
-    segmenter = load_segmenter()
-    
-    # Abas
-    tab1, tab2 = st.tabs(["🖼️ Classificação Individual", "📚 Classificação em Batch & Benchmark"])
-    
-    # --- ABA 1: INDIVIDUAL ---
-    with tab1:
-        st.header("Análise de Imagem Única")
-        uploaded_file = st.file_uploader("Escolha uma imagem", type=['jpg', 'jpeg', 'png'], key="single")
+    if model is not None and scaler is not None:
+        segmenter = load_segmenter()
         
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file)
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.image(image, caption="Imagem Original", use_container_width=True)
-            
-            with st.spinner("Analisando..."):
-                try:
-                    prediction, probability, face = classify_single_image(image, model, scaler, segmenter)
-                    
-                    with col2:
-                        face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-                        st.image(face_rgb, caption="Face Detectada", use_container_width=True)
-                    
-                    st.markdown("---")
-                    if prediction == 0:
-                        st.error("🟥 **FAKE (Deepfake Detectado)**")
-                        confidence = probability[0]
-                    else:
-                        st.success("🟩 **REAL (Imagem Autêntica)**")
-                        confidence = probability[1]
-                    
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Classificação", "FAKE" if prediction == 0 else "REAL")
-                    m2.metric("Confiança", f"{confidence:.1%}")
-                    m3.metric("Fake Score", f"{probability[0]:.1%}")
-                    
-                    st.progress(float(confidence))
-                    
-                except Exception as e:
-                    st.error(f"❌ Erro: {str(e)}")
-
-    # --- ABA 2: BATCH ---
-    with tab2:
-        st.header("Processamento em Lote e Escalabilidade")
+        # Abas
+        tab1, tab2 = st.tabs(["🖼️ Classificação Individual", "📚 Classificação em Batch & Benchmark"])
         
-        uploaded_files = st.file_uploader(
-            "Escolha as imagens ou arquivo ZIP", 
-            type=['jpg', 'jpeg', 'png', 'zip'], # ACEITA ZIP AGORA
-            accept_multiple_files=True, 
-            key="batch"
-        )
-        
-        if uploaded_files:
-            # Pré-cálculo da quantidade real de imagens (abrindo ZIPs se necessário)
-            total_images_count = 0
-            valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
+        # --- ABA 1: INDIVIDUAL ---
+        with tab1:
+            st.header("Análise de Imagem Única")
+            uploaded_file = st.file_uploader("Escolha uma imagem", type=['jpg', 'jpeg', 'png'], key="single")
             
-            for up_file in uploaded_files:
-                if up_file.name.lower().endswith('.zip'):
-                    try:
-                        with zipfile.ZipFile(up_file) as z:
-                            # Conta arquivos dentro do zip que têm extensões válidas
-                            # Filtra __MACOSX e arquivos ocultos para contagem precisa
-                            count = sum(1 for f in z.namelist() if f.lower().endswith(valid_extensions) and not f.startswith('__MACOSX') and not os.path.basename(f).startswith('.'))
-                            total_images_count += count
-                    except Exception as e:
-                        logger.warning(f"Erro ao pré-ler ZIP: {e}")
-                else:
-                    total_images_count += 1
-            
-            st.info(f"📂 {total_images_count} imagens identificadas (incluindo conteúdo de ZIPs).")
-            
-            col_btn1, col_btn2 = st.columns(2)
-            
-            # Botão 1: Classificação Normal (agora com 8 threads)
-            run_classification = col_btn1.button("🚀 Classificar Imagens (8 threads)")
-            
-            # Botão 2: Teste de Escalabilidade
-            run_benchmark = col_btn2.button("⚡ Executar Teste de Escalabilidade Forte (1, 2, 4, 8 Threads)")
-            
-            # --- LÓGICA CLASSIFICAÇÃO ---
-            if run_classification:
-                with st.spinner(f"Processando {total_images_count} imagens..."):
-                    # Altera para usar 8 workers
-                    results_data, elapsed_time = process_batch_upload(uploaded_files, model, scaler, num_workers=8)
-                    
-                    if results_data:
-                        df = pd.DataFrame(results_data)
-                        total = len(df)
-                        real_count = len(df[df["Predição"] == "REAL"])
-                        fake_count = len(df[df["Predição"] == "FAKE"])
-                        errors = len(df[df["Predição"] == "Erro"])
-                        
-                        st.markdown("### 📊 Resultados da Classificação")
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Total", total)
-                        c2.metric("Tempo", f"{elapsed_time:.2f}s")
-                        c3.metric("Throughput", f"{total/elapsed_time:.1f} img/s")
-                        c4.metric("Erros", errors)
-                        
-                        col_chart, col_df = st.columns([1, 2])
-                        
-                        with col_chart:
-                            # Gráfico de Rosca
-                            st.markdown("#### Distribuição")
-                            if total > 0:
-                                fig = px.pie(
-                                    names=["REAL", "FAKE", "Erro"],
-                                    values=[real_count, fake_count, errors],
-                                    color_discrete_map={"REAL": "green", "FAKE": "red", "Erro": "gray"},
-                                    hole=0.5
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                        
-                        with col_df:
-                            st.markdown("#### Resultados Detalhados")
-                            # Estilização da tabela
-                            def color_status(val):
-                                color = 'red' if 'FAKE' in val else 'green' if 'REAL' in val else 'black'
-                                return f'color: {color}; font-weight: bold'
-                            
-                            st.dataframe(
-                                df.style.applymap(color_status, subset=['Status']),
-                                use_container_width=True,
-                                height=400
-                            )
-            
-            # --- LÓGICA BENCHMARK ---
-            if run_benchmark:
-                st.markdown("### ⚡ Resultados do Teste de Escalabilidade")
-                df_bench = run_scalability_benchmark(uploaded_files, model, scaler)
+            if uploaded_file is not None:
+                image = Image.open(uploaded_file)
+                col1, col2 = st.columns(2)
                 
-                if df_bench is not None:
-                    # Exibir Tabela
-                    st.dataframe(df_bench.style.format("{:.2f}", subset=["Tempo (s)", "Speedup", "Eficiência"]))
-                    
-                    # Gráficos Lado a Lado
-                    g1, g2 = st.columns(2)
-                    
-                    with g1:
-                        fig_time = px.line(
-                            df_bench, x="Threads", y="Tempo (s)", 
-                            markers=True, title="Tempo de Execução vs Threads (Menor é melhor)"
-                        )
-                        st.plotly_chart(fig_time, use_container_width=True)
+                with col1:
+                    st.image(image, caption="Imagem Original", use_container_width=True)
+                
+                with st.spinner("Analisando..."):
+                    try:
+                        prediction, probability, face = classify_single_image(image, model, scaler, segmenter)
                         
-                    with g2:
-                        # Adiciona linha ideal
-                        df_bench['Speedup Ideal'] = df_bench['Threads']
-                        fig_speed = px.line(
-                            df_bench, x="Threads", y=["Speedup", "Speedup Ideal"], 
-                            markers=True, title="Speedup vs Threads (Maior é melhor)"
-                        )
-                        st.plotly_chart(fig_speed, use_container_width=True)
+                        with col2:
+                            face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                            st.image(face_rgb, caption="Face Detectada", use_container_width=True)
+                        
+                        st.markdown("---")
+                        if prediction == 0:
+                            st.error("🟥 **FAKE (Deepfake Detectado)**")
+                            confidence = probability[0]
+                        else:
+                            st.success("🟩 **REAL (Imagem Autêntica)**")
+                            confidence = probability[1]
+                        
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Classificação", "FAKE" if prediction == 0 else "REAL")
+                        m2.metric("Confiança", f"{confidence:.1%}")
+                        m3.metric("Fake Score", f"{probability[0]:.1%}")
+                        
+                        st.progress(float(confidence))
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erro: {str(e)}")
+
+        # --- ABA 2: BATCH ---
+        with tab2:
+            st.header("Processamento em Lote e Escalabilidade")
+            
+            uploaded_files = st.file_uploader(
+                "Escolha as imagens ou arquivo ZIP", 
+                type=['jpg', 'jpeg', 'png', 'zip'], # ACEITA ZIP AGORA
+                accept_multiple_files=True, 
+                key="batch"
+            )
+            
+            if uploaded_files:
+                # Pré-cálculo da quantidade real de imagens (abrindo ZIPs se necessário)
+                total_images_count = 0
+                valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
+                
+                for up_file in uploaded_files:
+                    if up_file.name.lower().endswith('.zip'):
+                        try:
+                            with zipfile.ZipFile(up_file) as z:
+                                # Conta arquivos dentro do zip que têm extensões válidas
+                                # Filtra __MACOSX e arquivos ocultos para contagem precisa
+                                count = sum(1 for f in z.namelist() if f.lower().endswith(valid_extensions) and not f.startswith('__MACOSX') and not os.path.basename(f).startswith('.'))
+                                total_images_count += count
+                        except Exception as e:
+                            logger.warning(f"Erro ao pré-ler ZIP: {e}")
+                    else:
+                        total_images_count += 1
+                
+                st.info(f"📂 {total_images_count} imagens identificadas (incluindo conteúdo de ZIPs).")
+                
+                col_btn1, col_btn2 = st.columns(2)
+                
+                # Botão 1: Classificação Normal (agora com 8 threads)
+                run_classification = col_btn1.button("🚀 Classificar Imagens (8 threads)")
+                
+                # Botão 2: Teste de Escalabilidade
+                run_benchmark = col_btn2.button("⚡ Executar Teste de Escalabilidade Forte (1, 2, 4, 8 Threads)")
+                
+                # --- LÓGICA CLASSIFICAÇÃO ---
+                if run_classification:
+                    with st.spinner(f"Processando {total_images_count} imagens..."):
+                        # Altera para usar 8 workers
+                        results_data, elapsed_time = process_batch_upload(uploaded_files, model, scaler, num_workers=8)
+                        
+                        if results_data:
+                            df = pd.DataFrame(results_data)
+                            total = len(df)
+                            real_count = len(df[df["Predição"] == "REAL"])
+                            fake_count = len(df[df["Predição"] == "FAKE"])
+                            errors = len(df[df["Predição"] == "Erro"])
+                            
+                            st.markdown("### 📊 Resultados da Classificação")
+                            c1, c2, c3, c4 = st.columns(4)
+                            c1.metric("Total", total)
+                            c2.metric("Tempo", f"{elapsed_time:.2f}s")
+                            c3.metric("Throughput", f"{total/elapsed_time:.1f} img/s")
+                            c4.metric("Erros", errors)
+                            
+                            col_chart, col_df = st.columns([1, 2])
+                            
+                            with col_chart:
+                                # Gráfico de Rosca
+                                st.markdown("#### Distribuição")
+                                if total > 0:
+                                    fig = px.pie(
+                                        names=["REAL", "FAKE", "Erro"],
+                                        values=[real_count, fake_count, errors],
+                                        color_discrete_map={"REAL": "green", "FAKE": "red", "Erro": "gray"},
+                                        hole=0.5
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                            
+                            with col_df:
+                                st.markdown("#### Resultados Detalhados")
+                                # Estilização da tabela
+                                def color_status(val):
+                                    color = 'red' if 'FAKE' in val else 'green' if 'REAL' in val else 'black'
+                                    return f'color: {color}; font-weight: bold'
+                                
+                                st.dataframe(
+                                    df.style.applymap(color_status, subset=['Status']),
+                                    use_container_width=True,
+                                    height=400
+                                )
+                            
+                            # Download CSV
+                            csv = df.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                "📥 Baixar Relatório CSV",
+                                csv,
+                                "relatorio_deepfake.csv",
+                                "text/csv",
+                                key='download-csv'
+                            )
+                
+                # --- LÓGICA BENCHMARK ---
+                if run_benchmark:
+                    st.markdown("### ⚡ Resultados do Teste de Escalabilidade")
+                    df_bench = run_scalability_benchmark(uploaded_files, model, scaler)
                     
-                    st.success(f"Teste finalizado! O speedup máximo alcançado foi de {df_bench['Speedup'].max():.2f}x com {df_bench.loc[df_bench['Speedup'].idxmax(), 'Threads']} threads.")
-else:
-    st.warning("⚠️ Treine o modelo primeiro executando: `python scripts/main.py`")
+                    if df_bench is not None:
+                        # Exibir Tabela
+                        st.dataframe(df_bench.style.format("{:.2f}", subset=["Tempo (s)", "Speedup", "Eficiência"]))
+                        
+                        # Gráficos Lado a Lado
+                        g1, g2 = st.columns(2)
+                        
+                        with g1:
+                            fig_time = px.line(
+                                df_bench, x="Threads", y="Tempo (s)", 
+                                markers=True, title="Tempo de Execução vs Threads (Menor é melhor)"
+                            )
+                            st.plotly_chart(fig_time, use_container_width=True)
+                            
+                        with g2:
+                            # Adiciona linha ideal
+                            df_bench['Speedup Ideal'] = df_bench['Threads']
+                            fig_speed = px.line(
+                                df_bench, x="Threads", y=["Speedup", "Speedup Ideal"], 
+                                markers=True, title="Speedup vs Threads (Maior é melhor)"
+                            )
+                            st.plotly_chart(fig_speed, use_container_width=True)
+                        
+                        st.success(f"Teste finalizado! O speedup máximo alcançado foi de {df_bench['Speedup'].max():.2f}x com {df_bench.loc[df_bench['Speedup'].idxmax(), 'Threads']} threads.")
+    else:
+        st.warning("⚠️ Treine o modelo primeiro executando: `python scripts/main.py`")

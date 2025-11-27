@@ -1,231 +1,184 @@
-import threading
-import queue
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 import cv2
 import numpy as np
+import os
+import sys
+import time # Adicionado import time
+from pathlib import Path
+
+# Necessário para garantir imports corretos nos processos filhos
 try:
     from .face_segmentation import FaceSegmenter
     from .feature_extraction import extract_features_from_array
 except ImportError:
+    # Fallback para execução direta
+    sys.path.append(str(Path(__file__).parent))
     from face_segmentation import FaceSegmenter
     from feature_extraction import extract_features_from_array
 
+# Variáveis globais para os workers (inicializadas uma vez por processo)
+_worker_model = None
+_worker_scaler = None
+_worker_segmenter = None
+
+def init_worker(model, scaler):
+    """
+    Inicializa o worker carregando o segmentador e recebendo modelo/scaler.
+    Isso roda uma vez por Processo, evitando overhead de pickling repetido.
+    Também desativa threads internas de bibliotecas para evitar contenção.
+    """
+    global _worker_model, _worker_scaler, _worker_segmenter
+    
+    # Desativar multithreading interno do OpenCV e outras libs numéricas
+    # para evitar competição de recursos (oversubscription) quando rodando em multiprocessos
+    try:
+        import cv2
+        cv2.setNumThreads(0)
+    except ImportError:
+        pass
+        
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    
+    _worker_model = model
+    _worker_scaler = scaler
+    # Instancia o segmentador uma vez por processo
+    _worker_segmenter = FaceSegmenter()
+
+def dummy_task(_):
+    """Função auxiliar para warm-up do processo."""
+    return None
+
+def process_single_image_full(image_path):
+    """
+    Função 'Monolítica' que realiza todo o pipeline para uma imagem.
+    Executada isoladamente em um processo.
+    """
+    global _worker_model, _worker_scaler, _worker_segmenter
+    
+    try:
+        # 1. Segmentação
+        face_image = _worker_segmenter.segment_face(image_path)
+        
+        if face_image is None:
+             return {
+                'path': image_path,
+                'features': None,
+                'error': 'No face detected'
+            }
+
+        # 2. Extração de Features
+        features = extract_features_from_array(face_image)
+        
+        # 3. Classificação
+        if features is not None and _worker_model is not None:
+            features_reshaped = features.reshape(1, -1)
+            
+            if _worker_scaler is not None:
+                features_reshaped = _worker_scaler.transform(features_reshaped)
+            
+            prediction = _worker_model.predict(features_reshaped)[0]
+            proba = _worker_model.predict_proba(features_reshaped)[0]
+            
+            return {
+                'path': image_path,
+                'features': features,
+                'prediction': prediction,
+                'probability': proba
+            }
+        else:
+            return {
+                'path': image_path,
+                'features': features,
+                'error': 'Model not loaded or features failed'
+            }
+
+    except Exception as e:
+        return {
+            'path': image_path,
+            'error': str(e)
+        }
 
 class ParallelPipeline:
     """
-    Pipeline paralelizada para classificação de imagens com 3 estágios:
-    1. Segmentação de faces
-    2. Extração de features
-    3. Classificação/Predição
+    Nova implementação usando Multiprocessing (ProcessPoolExecutor).
+    Escalabilidade Forte Real (Bypassing GIL).
     """
     
-    def __init__(self, model=None, scaler=None, batch_size=4, max_queue_size=10):
-        """
-        Args:
-            model: modelo XGBoost treinado (opcional, para inferência)
-            scaler: scaler para normalização (opcional)
-            batch_size: número de imagens a processar em batch
-            max_queue_size: tamanho máximo das filas entre estágios
-        """
+    def __init__(self, model=None, scaler=None):
         self.model = model
         self.scaler = scaler
-        self.batch_size = batch_size
-        
-        self.segmentation_queue = queue.Queue(maxsize=max_queue_size)
-        self.feature_queue = queue.Queue(maxsize=max_queue_size)
-        self.result_queue = queue.Queue(maxsize=max_queue_size)
-        
-        # Removido self.face_segmenter compartilhado para evitar problemas de thread-safety com OpenCV
-        # self.face_segmenter = FaceSegmenter()
-        
-        self.stop_flag = threading.Event()
-        self.threads = []
-    
-    def _segmentation_worker(self):
-        """Worker que processa segmentação de faces"""
-        # Instancia local para thread-safety
-        face_segmenter = FaceSegmenter()
-        
-        while not self.stop_flag.is_set():
-            try:
-                item = self.segmentation_queue.get(timeout=0.5)
-                
-                if item is None:  
-                    self.feature_queue.put(None)
-                    break
-                
-                idx, image_path = item
-                
-                try:
-                    face_image = face_segmenter.segment_face(image_path)
-                    self.feature_queue.put((idx, face_image, image_path))
-                except Exception as e:
-                    print(f"Erro ao segmentar {image_path}: {e}")
-                    self.feature_queue.put((idx, None, image_path))
-                
-                self.segmentation_queue.task_done()
-                
-            except queue.Empty:
-                continue
-    
-    def _feature_extraction_worker(self):
-        """Worker que processa extração de features"""
-        while not self.stop_flag.is_set():
-            try:
-                item = self.feature_queue.get(timeout=0.5)
-                
-                if item is None:
-                    self.result_queue.put(None)
-                    break
-                
-                idx, face_image, image_path = item
-                
-                try:
-                    if face_image is not None:
-                        features = extract_features_from_array(face_image)
-                        self.result_queue.put((idx, features, image_path))
-                    else:
-                        self.result_queue.put((idx, None, image_path))
-                except Exception as e:
-                    print(f"Erro ao extrair features de {image_path}: {e}")
-                    self.result_queue.put((idx, None, image_path))
-                
-                self.feature_queue.task_done()
-                
-            except queue.Empty:
-                continue
-    
-    def _prediction_worker(self, results_dict, num_producers, total_images):
-        """
-        Worker que processa predições (se modelo fornecido).
-        Consome da result_queue até receber 'num_producers' sinais de finalização (None).
-        """
-        stop_signals_received = 0
-        processed_count = 0
-        
-        while not self.stop_flag.is_set():
-            try:
-                item = self.result_queue.get(timeout=0.5)
-                
-                if item is None:
-                    stop_signals_received += 1
-                    self.result_queue.task_done()
-                    if stop_signals_received >= num_producers:
-                        break
-                    continue
-                
-                idx, features, image_path = item
-                
-                try:
-                    if features is not None and self.model is not None:
-                        features_reshaped = features.reshape(1, -1)
-                        
-                        if self.scaler is not None:
-                            features_reshaped = self.scaler.transform(features_reshaped)
-                        
-                        prediction = self.model.predict(features_reshaped)[0]
-                        proba = self.model.predict_proba(features_reshaped)[0]
-                        results_dict[idx] = {
-                            'path': image_path,
-                            'features': features,
-                            'prediction': prediction,
-                            'probability': proba
-                        }
-                    elif features is not None:
-                        results_dict[idx] = {
-                            'path': image_path,
-                            'features': features
-                        }
-                    else:
-                        results_dict[idx] = {
-                            'path': image_path,
-                            'features': None,
-                            'error': 'Failed to extract features'
-                        }
-                    
-                    # Log de progresso
-                    processed_count += 1
-                    if processed_count % 10 == 0 or processed_count == total_images:
-                        print(f"🚀 Progresso: {processed_count}/{total_images} imagens processadas...", flush=True)
+        self.executor = None
+        self.execution_time = 0.0 # Armazena o tempo da última execução
 
-                except Exception as e:
-                    print(f"Erro ao processar resultado de {image_path}: {e}")
-                    results_dict[idx] = {
-                        'path': image_path,
-                        'error': str(e)
-                    }
-                
-                self.result_queue.task_done()
-                
-            except queue.Empty:
-                continue
-    
-    def process_images(self, image_paths, num_workers=2):
+    def process_images(self, image_paths, num_workers=None):
         """
-        Processa uma lista de imagens através da pipeline paralelizada
+        Processa imagens em paralelo usando processos.
+        """
+        total = len(image_paths)
         
-        Args:
-            image_paths: lista de caminhos para as imagens
-            num_workers: número de workers por estágio
+        # Se num_workers não for definido ou for 1, evitar overhead de processos
+        if num_workers == 1:
+            # Execução serial para benchmark de base preciso (sem overhead de pool)
+            init_worker(self.model, self.scaler)
+            results = []
             
-        Returns:
-            lista de dicionários com resultados ordenados pelos índices
-        """
-        results_dict = {}
-        total_images = len(image_paths)
+            # Medição Serial: Começa APÓS o primeiro item para consistência com a lógica paralela
+            # Mas como é serial, vamos medir tudo e descontar um delta fixo se necessário, 
+            # ou simplesmente medir o loop puro.
+            
+            t_start = time.time()
+            for i, path in enumerate(image_paths):
+                results.append(process_single_image_full(path))
+                if (i + 1) % 10 == 0:
+                    print(f"🚀 Progresso (Serial): {i+1}/{total}...", flush=True)
+            t_end = time.time()
+            
+            self.execution_time = t_end - t_start
+            return results
+
+        # Execução Paralela
+        print(f"🔥 Iniciando Pool com {num_workers} Processos...", flush=True)
         
-        self.stop_flag.clear()
-        self.threads = []
+        results = []
         
-        for _ in range(num_workers):
-            t = threading.Thread(target=self._segmentation_worker)
-            t.start()
-            self.threads.append(t)
-        
-        for _ in range(num_workers):
-            t = threading.Thread(target=self._feature_extraction_worker)
-            t.start()
-            self.threads.append(t)
-        
-        # Passa o total de imagens para o worker de log
-        t = threading.Thread(target=self._prediction_worker, args=(results_dict, num_workers, total_images))
-        t.start()
-        self.threads.append(t)
-        
-        for idx, image_path in enumerate(image_paths):
-            self.segmentation_queue.put((idx, image_path))
-        
-        for _ in range(num_workers):
-            self.segmentation_queue.put(None)
-        
-        for t in self.threads:
-            t.join()
-        
-        results = [results_dict[i] for i in sorted(results_dict.keys())]
+        # WARM-UP & PROCESSAMENTO no mesmo Pool
+        # Isso garante que os workers inicializados no warm-up sejam os mesmos usados no processamento
+        with ProcessPoolExecutor(max_workers=num_workers, initializer=init_worker, initargs=(self.model, self.scaler)) as executor:
+            # 1. WARM-UP: Forçar inicialização dos workers
+            # Garante que todos os processos carreguem o segmentador antes de cronometrar
+            list(executor.map(dummy_task, range(num_workers)))
+            print(f"✅ Pool de Processos com {num_workers} workers aquecido.", flush=True)
+            
+            # 2. PROCESSAMENTO REAL
+            # OTIMIZAÇÃO: Usar executor.map com chunksize
+            # Isso reduz drasticamente o overhead de comunicação IPC (Inter-Process Communication)
+            chunksize = max(1, total // (num_workers * 4)) 
+            
+            t_start_processing = time.time() # Marca inicio real
+            
+            # map aplica a função em cada item do iterável
+            result_iterator = executor.map(process_single_image_full, image_paths, chunksize=chunksize)
+            
+            completed = 0
+            for res in result_iterator:
+                results.append(res)
+                completed += 1
+                if completed % 10 == 0 or completed == total:
+                    print(f"🚀 Progresso ({num_workers} workers): {completed}/{total}...", flush=True)
+            
+            t_end_processing = time.time()
+            
+            # Cálculo de tempo TOTAL
+            self.execution_time = t_end_processing - t_start_processing
         
         return results
-    
+
     def stop(self):
-        """Para todos os workers"""
-        self.stop_flag.set()
-        for t in self.threads:
-            if t.is_alive():
-                t.join(timeout=1.0)
-
-
-def process_images_parallel(image_paths, model=None, scaler=None, num_workers=2):
-    """
-    Função de conveniência para processar imagens com pipeline paralelizada
-    
-    Args:
-        image_paths: lista de caminhos de imagens
-        model: modelo XGBoost treinado (opcional)
-        scaler: scaler para normalização (opcional)
-        num_workers: número de workers por estágio
-        
-    Returns:
-        lista de resultados
-    """
-    pipeline = ParallelPipeline(model=model, scaler=scaler)
-    results = pipeline.process_images(image_paths, num_workers=num_workers)
-    pipeline.stop()
-    return results
+        # No ProcessPoolExecutor (context manager), o shutdown é automático, 
+        # mas mantemos o método para compatibilidade com a interface anterior.
+        pass

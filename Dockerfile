@@ -1,5 +1,13 @@
 FROM python:3.11-slim
 
+# Configurações CRÍTICAS para evitar oversubscription em Multiprocessing
+# Garante que numpy/opencv/scikit usem apenas 1 thread por processo
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV VECLIB_MAXIMUM_THREADS=1
+ENV NUMEXPR_NUM_THREADS=1
+
 # Instala dependências do sistema necessárias para o OpenCV
 RUN apt-get update && apt-get install -y \
     libgl1 \
