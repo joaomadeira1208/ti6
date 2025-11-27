@@ -50,8 +50,8 @@ if __name__ == "__main__":
         layout="wide"  # Layout wide para acomodar a tabela e gráficos do batch
     )
 
-    # Título
-    st.title("🔍 Deepfake Detector")
+# Título
+st.title("Deepfake Detector")
 
 # Carrega o modelo e scaler (com cache)
 @st.cache_resource
