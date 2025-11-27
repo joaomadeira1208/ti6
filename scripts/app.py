@@ -17,15 +17,15 @@ import logging
 
 # Configuração de Logging global e silenciamento de logs indesejados do Streamlit
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.CRITICAL,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 # Silenciar loggers específicos do Streamlit que geram warnings indesejados
-# logging.getLogger('streamlit').setLevel(logging.CRITICAL)
-# logging.getLogger('streamlit.runtime.scriptrunner_utils').setLevel(logging.CRITICAL)
-# logging.getLogger('streamlit.runtime.scriptrunner_utils.script_run_context').setLevel(logging.CRITICAL)
+logging.getLogger('streamlit').setLevel(logging.CRITICAL)
+logging.getLogger('streamlit.runtime.scriptrunner_utils').setLevel(logging.CRITICAL)
+logging.getLogger('streamlit.runtime.scriptrunner_utils.script_run_context').setLevel(logging.CRITICAL)
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +295,93 @@ def run_scalability_benchmark(uploaded_files, model, scaler):
             shutil.rmtree(temp_dir)
 
 
+# --- FUNÇÃO DE BENCHMARK DE ESCALABILIDADE FRACA ---
+def run_weak_scalability_benchmark(uploaded_files, model, scaler):
+    logger.info(f"Iniciando Benchmark de Escalabilidade Fraca.")
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Usa a nova função auxiliar
+        image_paths, _ = save_and_extract_files(uploaded_files, temp_dir)
+        
+        if not image_paths:
+            st.warning("Nenhuma imagem válida encontrada para benchmark.")
+            return None
+        
+        # Define carga por thread (Weak Scaling: Carga fixa por processador)
+        # Limitado pelo total de imagens disponíveis dividido pelo máximo de threads (8)
+        max_threads = 8
+        images_per_thread = len(image_paths) // max_threads
+        
+        if images_per_thread == 0:
+            st.error(f"Quantidade insuficiente de imagens para escalabilidade fraca até {max_threads} threads. Envie pelo menos {max_threads} imagens.")
+            return None
+            
+        st.info(f"Configuração Weak Scaling: {images_per_thread} imagens por thread.")
+
+        pipeline = ParallelPipeline(model=model, scaler=scaler)
+        thread_counts = [1, 2, 4, 8]
+        results = []
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        base_time = None
+        
+        for i, n_threads in enumerate(thread_counts):
+            # A carga cresce proporcionalmente às threads
+            current_load = images_per_thread * n_threads
+            current_images = image_paths[:current_load]
+            
+            msg = f"Iniciando iteração Weak Scaling: {n_threads} threads processando {current_load} imagens..."
+            logger.info(msg)
+            status_text.markdown(f"🔄 Rodando teste com **{n_threads} threads** ({current_load} imagens)...")
+            
+            try:
+                _ = pipeline.process_images(current_images, num_workers=n_threads)
+                elapsed = pipeline.execution_time
+                
+            except Exception as e:
+                logger.error(f"ERRO CRÍTICO na execução com {n_threads} threads: {e}", exc_info=True)
+                st.error(f"Erro na execução com {n_threads} threads: {e}")
+                raise e
+
+            logger.info(f"Finalizado {n_threads} threads em {elapsed:.4f}s")
+            
+            
+            if n_threads == 1:
+                base_time = elapsed
+                efficiency = 1.0
+            else:
+                efficiency = base_time / elapsed if elapsed > 0 else 0.0
+            
+            throughput = current_load / elapsed if elapsed > 0 else 0.0
+            
+            results.append({
+                "Threads": n_threads,
+                "Carga (Imagens)": current_load,
+                "Tempo (s)": elapsed,
+                "Throughput (img/s)": throughput,
+                "Eficiência": efficiency
+            })
+            
+            progress_bar.progress((i + 1) / len(thread_counts))
+            
+        pipeline.stop()
+        logger.info("Benchmark Weak Scaling completo.")
+        status_text.text("✅ Benchmark Fraco concluído!")
+        return pd.DataFrame(results)
+
+    except Exception as e:
+        logger.error(f"Erro geral no benchmark fraco: {e}", exc_info=True)
+        st.error(f"Falha no benchmark fraco: {e}")
+        return None
+
+    finally:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+
 
 # --- INTERFACE PRINCIPAL (CONTINUAÇÃO) ---
 if __name__ == "__main__":
@@ -376,13 +463,16 @@ if __name__ == "__main__":
                 
                 st.info(f"📂 {total_images_count} imagens identificadas (incluindo conteúdo de ZIPs).")
                 
-                col_btn1, col_btn2 = st.columns(2)
+                col_btn1, col_btn2, col_btn3 = st.columns(3)
                 
                 # Botão 1: Classificação Normal (agora com 8 threads)
                 run_classification = col_btn1.button("🚀 Classificar Imagens (8 threads)")
                 
-                # Botão 2: Teste de Escalabilidade
-                run_benchmark = col_btn2.button("⚡ Executar Teste de Escalabilidade Forte (1, 2, 4, 8 Threads)")
+                # Botão 2: Teste de Escalabilidade Forte
+                run_benchmark = col_btn2.button("⚡ Escalabilidade Forte")
+
+                # Botão 3: Teste de Escalabilidade Fraca
+                run_weak_benchmark = col_btn3.button("📈 Escalabilidade Fraca")
                 
                 # --- LÓGICA CLASSIFICAÇÃO ---
                 if run_classification:
@@ -441,9 +531,9 @@ if __name__ == "__main__":
                                 key='download-csv'
                             )
                 
-                # --- LÓGICA BENCHMARK ---
+                # --- LÓGICA BENCHMARK FORTE ---
                 if run_benchmark:
-                    st.markdown("### ⚡ Resultados do Teste de Escalabilidade")
+                    st.markdown("### ⚡ Resultados do Teste de Escalabilidade Forte")
                     df_bench = run_scalability_benchmark(uploaded_files, model, scaler)
                     
                     if df_bench is not None:
@@ -456,7 +546,7 @@ if __name__ == "__main__":
                         with g1:
                             fig_time = px.line(
                                 df_bench, x="Threads", y="Tempo (s)", 
-                                markers=True, title="Tempo de Execução vs Threads (Menor é melhor)"
+                                markers=True, title="Tempo de Execução vs Threads"
                             )
                             st.plotly_chart(fig_time, use_container_width=True)
                             
@@ -465,10 +555,44 @@ if __name__ == "__main__":
                             df_bench['Speedup Ideal'] = df_bench['Threads']
                             fig_speed = px.line(
                                 df_bench, x="Threads", y=["Speedup", "Speedup Ideal"], 
-                                markers=True, title="Speedup vs Threads (Maior é melhor)"
+                                markers=True, title="Speedup vs Threads"
                             )
                             st.plotly_chart(fig_speed, use_container_width=True)
                         
                         st.success(f"Teste finalizado! O speedup máximo alcançado foi de {df_bench['Speedup'].max():.2f}x com {df_bench.loc[df_bench['Speedup'].idxmax(), 'Threads']} threads.")
+
+                # --- LÓGICA BENCHMARK FRACO ---
+                if run_weak_benchmark:
+                    st.markdown("### 📈 Resultados do Teste de Escalabilidade Fraca")
+                    df_weak = run_weak_scalability_benchmark(uploaded_files, model, scaler)
+                    
+                    if df_weak is not None:
+                        # Exibir Tabela
+                        st.dataframe(df_weak.style.format("{:.2f}", subset=["Tempo (s)", "Throughput (img/s)", "Eficiência"]))
+                        
+                        # Gráficos Lado a Lado
+                        g1, g2 = st.columns(2)
+                        
+                        with g1:
+                            # Tempo deve ser constante idealmente
+                            fig_time = px.line(
+                                df_weak, x="Threads", y="Tempo (s)", 
+                                markers=True, title="Tempo de Execução"
+                            )
+                            # Adiciona linha de referência do tempo base (1 thread)
+                            base_time = df_weak.loc[df_weak['Threads'] == 1, 'Tempo (s)'].values[0]
+                            fig_time.add_hline(y=base_time, line_dash="dash", line_color="green", annotation_text="Ideal")
+                            st.plotly_chart(fig_time, use_container_width=True)
+                            
+                        with g2:
+                            # Eficiência deve ser 1.0 (100%) idealmente
+                            fig_eff = px.line(
+                                df_weak, x="Threads", y="Eficiência", 
+                                markers=True, title="Eficiência vs Threads"
+                            )
+                            fig_eff.add_hline(y=1.0, line_dash="dash", line_color="green", annotation_text="Ideal")
+                            st.plotly_chart(fig_eff, use_container_width=True)
+                        
+                        st.success(f"Teste Weak Scaling finalizado! Eficiência mínima de {df_weak['Eficiência'].min():.1%} com {df_weak.loc[df_weak['Eficiência'].idxmin(), 'Threads']} threads.")
     else:
         st.warning("⚠️ Treine o modelo primeiro executando: `python scripts/main.py`")

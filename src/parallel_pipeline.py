@@ -134,8 +134,6 @@ class ParallelPipeline:
             t_start = time.time()
             for i, path in enumerate(image_paths):
                 results.append(process_single_image_full(path))
-                if (i + 1) % 10 == 0:
-                    print(f"🚀 Progresso (Serial): {i+1}/{total}...", flush=True)
             t_end = time.time()
             
             self.execution_time = t_end - t_start
@@ -168,8 +166,6 @@ class ParallelPipeline:
             for res in result_iterator:
                 results.append(res)
                 completed += 1
-                if completed % 10 == 0 or completed == total:
-                    print(f"🚀 Progresso ({num_workers} workers): {completed}/{total}...", flush=True)
             
             t_end_processing = time.time()
             
