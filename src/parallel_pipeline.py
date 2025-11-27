@@ -2,8 +2,12 @@ import threading
 import queue
 import cv2
 import numpy as np
-from .face_segmentation import FaceSegmenter
-from .feature_extraction import extract_features_from_array
+try:
+    from .face_segmentation import FaceSegmenter
+    from .feature_extraction import extract_features_from_array
+except ImportError:
+    from face_segmentation import FaceSegmenter
+    from feature_extraction import extract_features_from_array
 
 
 class ParallelPipeline:
@@ -30,13 +34,17 @@ class ParallelPipeline:
         self.feature_queue = queue.Queue(maxsize=max_queue_size)
         self.result_queue = queue.Queue(maxsize=max_queue_size)
         
-        self.face_segmenter = FaceSegmenter()
+        # Removido self.face_segmenter compartilhado para evitar problemas de thread-safety com OpenCV
+        # self.face_segmenter = FaceSegmenter()
         
         self.stop_flag = threading.Event()
         self.threads = []
     
     def _segmentation_worker(self):
         """Worker que processa segmentação de faces"""
+        # Instancia local para thread-safety
+        face_segmenter = FaceSegmenter()
+        
         while not self.stop_flag.is_set():
             try:
                 item = self.segmentation_queue.get(timeout=0.5)
@@ -48,7 +56,7 @@ class ParallelPipeline:
                 idx, image_path = item
                 
                 try:
-                    face_image = self.face_segmenter.segment_face(image_path)
+                    face_image = face_segmenter.segment_face(image_path)
                     self.feature_queue.put((idx, face_image, image_path))
                 except Exception as e:
                     print(f"Erro ao segmentar {image_path}: {e}")

@@ -13,16 +13,16 @@ print("="*80)
 
 # Carrega modelo e scaler
 print("\n1. Carregando modelo e scaler...")
-with open('model.pkl', 'rb') as f:
+with open('models/model.pkl', 'rb') as f:
     model = pickle.load(f)
-with open('scaler.pkl', 'rb') as f:
+with open('models/scaler.pkl', 'rb') as f:
     scaler = pickle.load(f)
 print("   ✓ Modelo e scaler carregados")
 
 # Coleta todas as imagens de validação
 print("\n2. Coletando imagens de validação...")
-val_fake_dir = "val/fake"
-val_real_dir = "val/real"
+val_fake_dir = "data/val/fake"
+val_real_dir = "data/val/real"
 
 image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
 
@@ -44,17 +44,29 @@ print(f"   ✓ {len(fake_images)} imagens fake")
 print(f"   ✓ {len(real_images)} imagens real")
 print(f"   ✓ Total: {len(fake_images) + len(real_images)} imagens")
 
-# Processa todas as imagens
+# Processa todas as imagens em batches para mostrar progresso
 print("\n3. Processando imagens...")
 pipeline = ParallelPipeline(model=model, scaler=scaler)
 
-print("   Processando imagens fake...")
-fake_results = pipeline.process_images(fake_images, num_workers=2)
-print("   Processando imagens real...")
-real_results = pipeline.process_images(real_images, num_workers=2)
+def process_in_batches(image_list, batch_size=100, label=""):
+    results = []
+    total = len(image_list)
+    for i in range(0, total, batch_size):
+        batch = image_list[i:i+batch_size]
+        print(f"   Processing {label} batch {i//batch_size + 1}/{(total-1)//batch_size + 1} ({min(i+batch_size, total)}/{total})...")
+        # Usando 1 worker para garantir estabilidade e evitar deadlocks no macOS
+        batch_results = pipeline.process_images(batch, num_workers=1)
+        results.extend(batch_results)
+    return results
+
+print("   --- Iniciando processamento FAKE ---")
+fake_results = process_in_batches(fake_images, batch_size=200, label="FAKE")
+
+print("\n   --- Iniciando processamento REAL ---")
+real_results = process_in_batches(real_images, batch_size=200, label="REAL")
 
 pipeline.stop()
-print("   ✓ Processamento concluído")
+print("\n   ✓ Processamento concluído")
 
 # Coleta predições e labels verdadeiros
 y_true = []

@@ -1,0 +1,47 @@
+{
+  "timestamp": "2025-11-26T22:03:36.471560",
+  "system_info": {
+    "platform": "macOS-15.6.1-arm64-arm-64bit",
+    "processor": "arm",
+    "cpu_count": 8,
+    "python_version": "3.12.12",
+    "ram_gb": 8.0
+  },
+  "strong_scaling": {
+    "type": "strong_scaling",
+    "baseline_time": 0.31827592849731445,
+    "results": [
+      {
+        "num_workers": 1,
+        "num_images": 20,
+        "elapsed_time": 0.31827592849731445,
+        "successful": 20,
+        "errors": 0,
+        "images_per_second": 62.83855676559202,
+        "speedup": 1.0,
+        "efficiency": 1.0
+      },
+      {
+        "num_workers": 2,
+        "num_images": 20,
+        "elapsed_time": 0.2474501132965088,
+        "successful": 18,
+        "errors": 0,
+        "images_per_second": 72.74193476901495,
+        "speedup": 1.2862226016277396,
+        "efficiency": 0.6431113008138698
+      },
+      {
+        "num_workers": 4,
+        "num_images": 20,
+        "elapsed_time": 0.22651886940002441,
+        "successful": 16,
+        "errors": 0,
+        "images_per_second": 70.6342921557875,
+        "speedup": 1.4050746824771152,
+        "efficiency": 0.3512686706192788
+      }
+    ]
+  },
+  "weak_scaling": null
+}
