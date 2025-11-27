@@ -307,17 +307,18 @@ if __name__ == "__main__":
         tab1, tab2 = st.tabs(["🖼️ Classificação Individual", "📚 Classificação em Batch & Benchmark"])
         
         # --- ABA 1: INDIVIDUAL ---
+
         with tab1:
             st.header("Análise de Imagem Única")
             uploaded_file = st.file_uploader("Escolha uma imagem", type=['jpg', 'jpeg', 'png'], key="single")
-            
+        
             if uploaded_file is not None:
                 image = Image.open(uploaded_file)
-                col1, col2 = st.columns(2)
-                
+                col1, col2, col3, col4 = st.columns([0.5, 0.5, 0.2, 0.5])
+            
                 with col1:
                     st.image(image, caption="Imagem Original", use_container_width=True)
-                
+            
                 with st.spinner("Analisando..."):
                     try:
                         prediction, probability, face = classify_single_image(image, model, scaler, segmenter)
