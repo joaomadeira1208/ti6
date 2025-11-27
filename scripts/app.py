@@ -33,7 +33,7 @@ st.set_page_config(
 )
 
 # Título
-st.title("🔍 Deepfake Detector")
+st.title("Deepfake Detector")
 
 # Carrega o modelo e scaler (com cache)
 @st.cache_resource
@@ -152,7 +152,7 @@ if model is not None and scaler is not None:
     segmenter = load_segmenter()
     
     # Abas
-    tab1, tab2 = st.tabs(["🖼️ Classificação Individual", "📚 Classificação em Batch (Paralela)"])
+    tab1, tab2 = st.tabs(["Classificação Individual", "Classificação em Batch (Paralela)"])
     
     # --- ABA 1: INDIVIDUAL ---
     with tab1:
@@ -161,7 +161,7 @@ if model is not None and scaler is not None:
         
         if uploaded_file is not None:
             image = Image.open(uploaded_file)
-            col1, col2 = st.columns(2)
+            col1, col2, col3, col4 = st.columns([0.5, 0.5, 0.2, 0.5])
             
             with col1:
                 st.image(image, caption="Imagem Original", use_container_width=True)
@@ -202,7 +202,7 @@ if model is not None and scaler is not None:
         if uploaded_files:
             st.info(f"📂 {len(uploaded_files)} imagens selecionadas.")
             
-            if st.button("🚀 Iniciar Processamento Paralelo"):
+            if st.button("Iniciar Processamento Paralelo"):
                 with st.spinner(f"Processando {len(uploaded_files)} imagens em paralelo..."):
                     
                     # Barra de progresso simulada (já que o pipeline bloqueia)
@@ -223,7 +223,7 @@ if model is not None and scaler is not None:
                         fake_count = len(df[df["Predição"] == "FAKE"])
                         errors = len(df[df["Predição"] == "Erro"])
                         
-                        st.markdown("### 📊 Estatísticas do Lote")
+                        st.markdown("### Estatísticas do Lote")
                         
                         # Cards de Métricas
                         c1, c2, c3, c4 = st.columns(4)
