@@ -285,7 +285,7 @@ if model is not None and scaler is not None:
     segmenter = load_segmenter()
     
     # Abas
-    tab1, tab2 = st.tabs(["Classificação Individual", "Classificação em Batch (Paralela)"])
+    tab1, tab2 = st.tabs(["Classificação Individual", "Classificação em Batch (Parale la)"])
     
     # --- ABA 1: INDIVIDUAL ---
     with tab1:
@@ -359,7 +359,7 @@ if model is not None and scaler is not None:
             col_btn1, col_btn2 = st.columns(2)
             
             # Botão 1: Classificação Normal (agora com 8 threads)
-            run_classification = col_btn1.button("🚀 Classificar Imagens (8 threads)")
+            run_classification = col_btn1.button("Classificar Imagens (8 threads)")
             
             # Botão 2: Teste de Escalabilidade
             run_benchmark = col_btn2.button("⚡ Executar Teste de Escalabilidade Forte (1, 2, 4, 8 Threads)")
