@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepfake-detector
+spec:
+  replicas: 2  # AQUI ESTÁ A MÁGICA: 2 PODS
+  selector:
+    matchLabels:
+      app: deepfake-detector
+  template:
+    metadata:
+      labels:
+        app: deepfake-detector
+    spec:
+      containers:
+      - name: deepfake-detector
+        image: deepfake-detector:latest
+        imagePullPolicy: IfNotPresent # Usa a imagem local
+        ports:
+        - containerPort: 8501
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deepfake-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: deepfake-detector
+  ports:
+  - port: 80
+    targetPort: 8501

@@ -15,9 +15,6 @@ __pycache__/
 *.pyd
 .Python
 
-# Modelos treinados (podem ser grandes)
-models/*.pkl
-
 # Resultados e métricas
 results/*.csv
 results/*.json
