@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: deepfake-detector
 spec:
-  replicas: 2  # AQUI ESTÁ A MÁGICA: 2 PODS
+  replicas: 3
   selector:
     matchLabels:
       app: deepfake-detector

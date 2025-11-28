@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY scripts/ scripts/
 COPY models/ models/
-COPY .streamlit/ .streamlit/ # Adicionado: Copia a configuração do Streamlit
+COPY .streamlit/ .streamlit/
 
 # Expõe a porta do Streamlit
 EXPOSE 8501
